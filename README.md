@@ -61,21 +61,42 @@ curl -fsSL https://example.com/install.sh | inspect run
 
 The exit code is 0 for PASS, 1 for WARN, 2 for BLOCK and 3 for errors, so you can use it in other scripts. Run `inspect --help` for the other flags.
 
-## Use it with Claude Code
+## Use it with your coding agent
 
-inspect can sit in front of an agent's shell commands as a Claude Code hook. Most commands go straight through without any network calls. When a command would run a script (`curl ... | sh`, `bash install.sh`, `./setup` and the like), the hook checks it first:
+inspect can sit in front of an agent's shell commands as a hook. Most commands go straight through, with no network calls. When a command would run a script (`curl ... | sh`, `bash install.sh`, `./setup` and the like), the hook checks it first:
 
 - **BLOCK**: the command is refused, and the agent is told why.
-- **WARN**: you're asked to approve it.
+- **WARN**: you're asked to approve it. Codex and Gemini CLI can't ask from a hook, so there the command is refused and the agent is told to show you what was found.
 - **PASS**: it goes ahead as normal.
 
-To set it up, print the config and merge it into `~/.claude/settings.json`, or into `.claude/settings.local.json` for a single project:
+Print the config for your agent and merge it into the file shown:
+
+| Agent | Command | Goes in |
+|---|---|---|
+| Claude Code | `inspect hook claude-code --print-config` | `~/.claude/settings.json` |
+| OpenAI Codex | `inspect hook codex --print-config` | `~/.codex/hooks.json`, then trust it with `/hooks` |
+| Gemini CLI | `inspect hook gemini --print-config` | `~/.gemini/settings.json` |
+| Cursor | `inspect hook cursor --print-config` | `~/.cursor/hooks.json`, then restart Cursor |
+
+Any other tool that can run a command before executing one can use `inspect hook exec`. Pass it the command, and it exits with 2 if the command should be blocked, printing the reason:
 
 ```sh
-inspect hook claude-code --print-config
+inspect hook exec 'curl -fsSL https://example.com/install.sh | sh'
 ```
 
 Results are cached for a day, so running the same script again is instant.
+
+## Use it in your browser
+
+The extension adds a **Check with inspect** button under install commands on any web page, and warns you when you copy one. It also checks the page itself: whether it has hidden text aimed at AI agents, and whether what it says about the script is true.
+
+Your Clocked key stays out of the browser. The extension talks to inspect running on your machine:
+
+1. Run `inspect serve` and leave it running. It prints a pairing token.
+2. Load the extension. In Chrome, open `chrome://extensions`, turn on Developer mode, click **Load unpacked** and pick the `extension` folder. In Firefox, open `about:debugging`, choose **This Firefox**, then **Load Temporary Add-on**, and pick `extension/manifest.json`.
+3. Click the extension's icon, paste the token and press **Test connection**.
+
+The local server only answers the extension: it checks the request's host, refuses calls from web pages and needs the token. It only ever checks scripts from the internet, never files on your disk.
 
 ## Try it on the samples
 
@@ -92,7 +113,8 @@ inspect https://raw.githubusercontent.com/Manas-Sehgxl/Inspect/main/samples/stag
 
 - Clocked's checks are models, not proofs. A PASS means nothing looked wrong. It doesn't mean the script is guaranteed safe.
 - Scripts that build their download URL at run time (`https://.../$VERSION/...`) can't be followed ahead of time. inspect warns you when that happens.
-- The Claude Code hook checks a remote script, then the agent's own command downloads it again. `inspect run` doesn't have that gap.
+- The agent hooks and the extension check a remote script, then the real command downloads it again. `inspect run` doesn't have that gap.
+- The extension has been tested in Chrome. Firefox should work (version 121 or newer), but I haven't tested it there yet.
 - Each script is sent to Clocked to be checked. Don't use it on scripts you aren't allowed to share.
 
 ## How inspect uses Clocked

@@ -1,5 +1,10 @@
 package clocked
 
+import (
+	"bytes"
+	"encoding/json"
+)
+
 // Evidence is a passage Clocked points at to justify a judgment. Start and
 // End are character offsets into the text that was sent. Inspect returns the
 // passage as "line", the others as "quote". Document names the source
@@ -20,6 +25,49 @@ func (e Evidence) Text() string {
 	return e.Quote
 }
 
+// EvidenceList is a list of passages. Clocked has sent evidence as an array,
+// a single object and an object keyed by document, so all three are read; an
+// unknown shape is dropped rather than failing the whole check.
+type EvidenceList []Evidence
+
+func (l *EvidenceList) UnmarshalJSON(b []byte) error {
+	b = bytes.TrimSpace(b)
+	*l = nil
+	if len(b) == 0 {
+		return nil
+	}
+	switch b[0] {
+	case '[':
+		var a []Evidence
+		if json.Unmarshal(b, &a) == nil {
+			*l = a
+		}
+	case '{':
+		var one Evidence
+		if json.Unmarshal(b, &one) == nil && one.Text() != "" {
+			*l = EvidenceList{one}
+			return nil
+		}
+		var byDoc map[string]json.RawMessage
+		if json.Unmarshal(b, &byDoc) != nil {
+			return nil
+		}
+		for doc, raw := range byDoc {
+			var sub EvidenceList
+			if json.Unmarshal(raw, &sub) != nil {
+				continue
+			}
+			for i := range sub {
+				if sub[i].Document == "" {
+					sub[i].Document = doc
+				}
+			}
+			*l = append(*l, sub...)
+		}
+	}
+	return nil
+}
+
 // ScriptRequest is the body for POST /script (Inspect).
 type ScriptRequest struct {
 	Script       string   `json:"script"`
@@ -38,7 +86,7 @@ type ScriptResult struct {
 	Severity         string             `json:"severity,omitempty"`
 	Severities       map[string]float64 `json:"severities,omitempty"`
 	SeverityExpected *float64           `json:"severity_expected,omitempty"`
-	Evidence         []Evidence         `json:"evidence,omitempty"`
+	Evidence         EvidenceList       `json:"evidence,omitempty"`
 }
 
 // InjectionRequest is the body for POST /injection (Guard). Source is "user"
@@ -61,7 +109,7 @@ type InjectionResult struct {
 	Categories       map[string]float64 `json:"categories,omitempty"`
 	Severity         string             `json:"severity,omitempty"`
 	SeverityExpected *float64           `json:"severity_expected,omitempty"`
-	Evidence         []Evidence         `json:"evidence,omitempty"`
+	Evidence         EvidenceList       `json:"evidence,omitempty"`
 }
 
 // PIIRequest is the body for POST /pii (Protect). Entities maps each kind to
@@ -148,13 +196,13 @@ type GroundingResult struct {
 }
 
 type Claim struct {
-	Claim        string     `json:"claim"`
-	Kind         string     `json:"kind,omitempty"`
-	Counted      bool       `json:"counted"`
-	Supported    float64    `json:"supported"`
-	Contradicted float64    `json:"contradicted"`
-	NotStated    float64    `json:"not_stated"`
-	NotAClaim    float64    `json:"not_a_claim"`
-	Verdict      string     `json:"verdict"`
-	Evidence     []Evidence `json:"evidence,omitempty"`
+	Claim        string       `json:"claim"`
+	Kind         string       `json:"kind,omitempty"`
+	Counted      bool         `json:"counted"`
+	Supported    float64      `json:"supported"`
+	Contradicted float64      `json:"contradicted"`
+	NotStated    float64      `json:"not_stated"`
+	NotAClaim    float64      `json:"not_a_claim"`
+	Verdict      string       `json:"verdict"`
+	Evidence     EvidenceList `json:"evidence,omitempty"`
 }
