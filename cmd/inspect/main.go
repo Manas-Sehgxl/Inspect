@@ -28,9 +28,12 @@ Usage:
   inspect run   <url|file|-> [-- args...]
                                    check, ask, then run the exact bytes checked
   curl -fsSL <url> | inspect run   same, reading the script from stdin
-  inspect hook claude-code         Claude Code PreToolUse hook (reads JSON on stdin)
-  inspect hook claude-code --print-config
-                                   print the settings.json snippet that installs it
+  inspect hook <agent>             pre-execution hook for a coding agent; agents:
+                                   claude-code, codex, gemini, cursor
+  inspect hook <agent> --print-config
+                                   print the config snippet that installs it
+  inspect hook exec <command>      agent-neutral check: exit 2 means block
+  inspect serve                    local server for the browser extension
 
 Flags:
   --page URL|FILE the install page or README the command came from; its
@@ -140,31 +143,73 @@ func run(args []string) int {
 }
 
 func runHook(args []string) int {
-	if len(args) == 0 || args[0] != "claude-code" {
-		fmt.Fprintln(os.Stderr, "inspect: usage: inspect hook claude-code [--print-config]")
+	if len(args) == 0 {
+		fmt.Fprintf(os.Stderr, "inspect: usage: inspect hook <%s|exec> [--print-config]\n", strings.Join(hook.AgentNames(), "|"))
 		return exitError
 	}
-	if len(args) > 1 && args[1] == "--print-config" {
+	name, args := args[0], args[1:]
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	checker := &hook.Checker{
+		NewScanner: func() (*scan.Scanner, error) { return newScanner(scan.Options{MaxDepth: 2, MaxScripts: 8}) },
+		Cache:      hook.DefaultCache(),
+	}
+
+	if name == "exec" {
+		return hookExec(ctx, checker, args)
+	}
+	agent, ok := hook.Agents[name]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "inspect: unknown agent %q; supported: %s, or exec for anything else\n", name, strings.Join(hook.AgentNames(), ", "))
+		return exitError
+	}
+	if len(args) > 0 && args[0] == "--print-config" {
 		bin, err := os.Executable()
 		if err != nil {
 			bin = "inspect"
 		}
-		fmt.Print(hook.ClaudeConfig(bin))
+		fmt.Fprintf(os.Stderr, "# %s: merge this into %s\n", agent.Name, agent.Settings)
+		if agent.Notes != "" {
+			fmt.Fprintf(os.Stderr, "# %s\n", agent.Notes)
+		}
+		fmt.Print(agent.Config(bin))
 		return exitPass
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-	scanner := func() (*scan.Scanner, error) {
-		return newScanner(scan.Options{MaxDepth: 2, MaxScripts: 8})
-	}
-	if err := hook.Claude(ctx, os.Stdin, os.Stdout, scanner, hook.DefaultCache()); err != nil {
-		// Exit 1 is a non-blocking error in Claude Code: it reports it and
-		// carries on, so a broken hook never wedges the agent.
+	code, err := agent.Run(ctx, os.Stdin, os.Stdout, checker)
+	if err != nil {
+		// Exit 1 is a non-blocking error for every supported agent: it is
+		// reported and the agent carries on, so a broken hook can't wedge it.
 		fmt.Fprintln(os.Stderr, "inspect:", err)
 		return 1
 	}
-	return exitPass
+	return code
+}
+
+// hookExec is the agent-neutral hook: the command comes as arguments or on
+// stdin, the summary goes to stderr and the exit status carries the
+// decision. Exit 2 means block, which is what most agents' hooks expect.
+func hookExec(ctx context.Context, checker *hook.Checker, args []string) int {
+	if len(args) > 0 && args[0] == "--" {
+		args = args[1:]
+	}
+	command := strings.Join(args, " ")
+	if command == "" {
+		data, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "inspect:", err)
+			return exitError
+		}
+		command = string(data)
+	}
+	cwd, _ := os.Getwd()
+	v := checker.Check(ctx, command, cwd)
+	if !v.Ran {
+		return exitPass
+	}
+	fmt.Fprintln(os.Stderr, v.Summary)
+	return exitCode(v.Decision)
 }
 
 func newScanner(opts scan.Options) (*scan.Scanner, error) {
