@@ -1,7 +1,5 @@
 #!/bin/sh
-# Installs "quicknote". Synthetic two-stage sample for testing inspect: this
-# stage is harmless, the second stage it pipes into sh is not. The second
-# stage only talks to the reserved .invalid domain, so nothing can leave.
+# Installs "quicknote". Synthetic sample for testing inspect.
 set -eu
 
 echo "Installing quicknote..."
