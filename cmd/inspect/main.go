@@ -33,10 +33,13 @@ Usage:
                                    print the settings.json snippet that installs it
 
 Flags:
+  --page URL|FILE the install page or README the command came from; its
+                  claims are checked against the script
   --json          print the report as JSON (check only)
   --depth N       levels of nested downloads to follow (default 2)
   --no-guard      skip the prompt-injection check
   --no-protect    skip the secrets check
+  --no-compare    don't diff against the last version you checked
   --force         let run execute a script that was blocked
 
 Exit status: 0 pass, 1 warn, 2 block, 3 error.
@@ -85,6 +88,8 @@ func run(args []string) int {
 	depth := fs.Int("depth", 2, "")
 	noGuard := fs.Bool("no-guard", false, "")
 	noProtect := fs.Bool("no-protect", false, "")
+	noCompare := fs.Bool("no-compare", false, "")
+	page := fs.String("page", "", "")
 	force := fs.Bool("force", false, "")
 	pos, err := parseInterspersed(fs, args)
 	if err != nil {
@@ -96,6 +101,7 @@ func run(args []string) int {
 		MaxScripts: 8,
 		NoGuard:    *noGuard,
 		NoProtect:  *noProtect,
+		NoCompare:  *noCompare,
 		Progress:   progress(),
 	}
 	sc, err := newScanner(opts)
@@ -109,6 +115,7 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "inspect:", err)
 		return exitError
 	}
+	target.Page = *page
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -169,7 +176,7 @@ func newScanner(opts scan.Options) (*scan.Scanner, error) {
 	if u := os.Getenv("CLOCKED_BASE_URL"); u != "" {
 		client.BaseURL = u
 	}
-	return &scan.Scanner{Client: client, Opts: opts}, nil
+	return &scan.Scanner{Client: client, Opts: opts, History: scan.DefaultHistory()}, nil
 }
 
 // apiKey reads the Clocked key from CLOCKED_API_KEY, or else from

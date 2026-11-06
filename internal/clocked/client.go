@@ -1,6 +1,7 @@
 // Package clocked is a small client for the Clocked API
 // (https://clocked.rezolve.ai/docs). It covers the endpoints Inspect uses:
-// /script (Inspect), /injection (Guard) and /pii (Protect).
+// /script (Inspect), /injection (Guard), /pii (Protect), /compare (Compare)
+// and /grounding (Verify).
 package clocked
 
 import (
@@ -68,6 +69,16 @@ func (c *Client) Injection(ctx context.Context, req InjectionRequest) (*Injectio
 func (c *Client) PII(ctx context.Context, req PIIRequest) (*PIIResult, error) {
 	var out PIIResult
 	return &out, c.post(ctx, "/pii", req, &out)
+}
+
+func (c *Client) Compare(ctx context.Context, req CompareRequest) (*CompareResult, error) {
+	var out CompareResult
+	return &out, c.post(ctx, "/compare", req, &out)
+}
+
+func (c *Client) Grounding(ctx context.Context, req GroundingRequest) (*GroundingResult, error) {
+	var out GroundingResult
+	return &out, c.post(ctx, "/grounding", req, &out)
 }
 
 // post sends one logical request. Retries reuse the same Idempotency-Key so

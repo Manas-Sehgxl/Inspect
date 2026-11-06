@@ -67,6 +67,9 @@ func Text(w io.Writer, rep *scan.Report, color bool) {
 	for _, sc := range rep.Scripts {
 		p.script(sc)
 	}
+	if rep.Page != nil {
+		p.page(rep.Page, rep.Scripts[0].Body)
+	}
 
 	p.f("%s %s  %s\n", p.bold("Decision"), p.decision(rep.Decision), advice(rep.Decision))
 	p.f("%s\n", p.dim(fmt.Sprintf("Clocked credits used: %g", rep.Credits)))
@@ -140,12 +143,100 @@ func (p printer) script(sc *scan.Script) {
 		}
 	}
 
-	if len(sc.Reasons) > 0 {
-		p.f("  %s\n", "Why")
-		for _, r := range sc.Reasons {
-			p.f("    • %s\n", r)
+	if ch := sc.Changed; ch != nil {
+		p.f("  %-10s %s\n", "Changed", p.paint("33", changeLine(ch)))
+		for _, c := range ch.Conflicts() {
+			was, now := diffLines(c, ch.PrevBody, sc.Body)
+			for _, l := range was {
+				p.f("  %s %s\n", p.dim("         │"), p.paint("31", "- "+shorten(strings.TrimSpace(l), 96)))
+			}
+			for _, l := range now {
+				p.evidence(sc.Body, -1, l, p.paint("32", "+ "+shorten(strings.TrimSpace(l), 96)))
+			}
 		}
 	}
+
+	p.reasons(sc.Reasons)
+	p.f("\n")
+}
+
+// diffLines narrows one Compare conflict to the old and new lines that
+// differ. If nothing differs line by line (a reworded passage), it falls
+// back to the first line of each quote.
+func diffLines(c clocked.CompareFinding, oldBody, newBody string) (was, now []string) {
+	was = scan.ChangedLines(c.A.Quote, newBody)
+	now = scan.ChangedLines(c.B.Quote, oldBody)
+	if len(was) == 0 && len(now) == 0 {
+		first := func(s string) string { l, _, _ := strings.Cut(strings.TrimSpace(s), "\n"); return l }
+		return []string{first(c.A.Quote)}, []string{first(c.B.Quote)}
+	}
+	return was, now
+}
+
+func changeLine(ch *scan.Change) string {
+	s := fmt.Sprintf("since you checked it %s (it was %s) · +%d −%d lines",
+		ch.Since.Local().Format("Jan 2 15:04"), ch.PrevDecision, ch.Added, ch.Removed)
+	switch {
+	case ch.Note != "":
+		s += " · " + ch.Note
+	case ch.Compare != nil && len(ch.Compare.Pairs) > 0:
+		pr := ch.Compare.Pairs[0]
+		s += fmt.Sprintf(" · Compare: %s", pr.Relation)
+		if n := len(pr.Conflicts); n > 0 {
+			s += fmt.Sprintf(", %d behaviour change(s)", n)
+		}
+	}
+	return s
+}
+
+func (p printer) reasons(rs []string) {
+	if len(rs) == 0 {
+		return
+	}
+	p.f("  %s\n", "Why")
+	for _, r := range rs {
+		p.f("    • %s\n", r)
+	}
+}
+
+// page prints the install-page check. script is the root script's body,
+// which Verify's evidence offsets point into.
+func (p printer) page(pg *scan.Page, script string) {
+	p.f("%s  %s\n", p.bold("Install page "+pg.Source), p.decision(pg.Decision))
+	if g := pg.Guard; g != nil {
+		if g.Injection >= threshold(g.Threshold) {
+			p.f("  %-10s %s (%.2f) · %s\n", "Guard", p.paint("31", "text aimed at AI agents"), g.Injection, g.Category)
+			for _, e := range g.Evidence {
+				p.f("  %s %s\n", p.dim("         │"), p.paint("33", shorten(strings.TrimSpace(e.Text()), 100)))
+			}
+		} else {
+			p.f("  %-10s no prompt injection (%.2f)\n", "Guard", g.Injection)
+		}
+	}
+	if v := pg.Verify; v != nil {
+		counted := 0
+		for _, c := range v.Claims {
+			if c.Counted {
+				counted++
+			}
+		}
+		bad := pg.Contradicted()
+		if len(bad) == 0 {
+			p.f("  %-10s %d claim(s) about the script checked, none contradicted\n", "Verify", counted)
+		} else {
+			p.f("  %-10s %s\n", "Verify", p.paint("31", fmt.Sprintf("%d of %d claim(s) contradicted by the script", len(bad), counted)))
+		}
+		for _, c := range bad {
+			p.f("  %s %s\n", p.dim("    page │"), fmt.Sprintf("%q", shorten(strings.TrimSpace(c.Claim), 90)))
+			for _, e := range c.Evidence {
+				p.evidence(script, e.Start, e.Quote, "")
+			}
+		}
+		if len(bad) > 0 {
+			p.f("  %s\n", p.dim("           (the lines Inspect flagged in the script are listed above)"))
+		}
+	}
+	p.reasons(pg.Reasons)
 	p.f("\n")
 }
 

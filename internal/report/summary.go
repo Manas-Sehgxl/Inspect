@@ -22,6 +22,21 @@ func Summary(rep *scan.Report) string {
 		for _, r := range sc.Reasons {
 			fmt.Fprintf(&b, "\n- %s", r)
 		}
+		if sc.Changed != nil {
+			fmt.Fprintf(&b, "\n- changed %s", changeLine(sc.Changed))
+			for i, c := range sc.Changed.Conflicts() {
+				if i == maxSummaryEvidence {
+					break
+				}
+				was, now := diffLines(c, sc.Changed.PrevBody, sc.Body)
+				for _, l := range was {
+					fmt.Fprintf(&b, "\n  - %s", shorten(strings.TrimSpace(l), 90))
+				}
+				for _, l := range now {
+					fmt.Fprintf(&b, "\n  + %s", shorten(strings.TrimSpace(l), 90))
+				}
+			}
+		}
 
 		n := 0
 		quote := func(start int, text string) {
@@ -47,6 +62,12 @@ func Summary(rep *scan.Report) string {
 			for _, e := range r.Evidence {
 				quote(e.Start, e.Text())
 			}
+		}
+	}
+	if pg := rep.Page; pg != nil {
+		fmt.Fprintf(&b, "\nInstall page %s: %s", pg.Source, pg.Decision)
+		for _, r := range pg.Reasons {
+			fmt.Fprintf(&b, "\n- %s", r)
 		}
 	}
 	if rep.Decision == scan.Pass {

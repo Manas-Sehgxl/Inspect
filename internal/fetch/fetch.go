@@ -26,29 +26,39 @@ var client = &http.Client{Timeout: 30 * time.Second}
 // Get downloads url and returns its body. Bodies over MaxChars are cut short
 // and truncated is set.
 func Get(ctx context.Context, url string) (body string, truncated bool, err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	// A character is at most 4 bytes, so this is enough to fill MaxChars.
+	data, err := get(ctx, url, UserAgent, 4*MaxChars+1)
 	if err != nil {
 		return "", false, err
 	}
-	req.Header.Set("User-Agent", UserAgent)
+	body, truncated = Limit(data)
+	return body, truncated, nil
+}
+
+// Page downloads a web page, such as the install instructions a script
+// came from, the way a browser would ask for it.
+func Page(ctx context.Context, url string) (string, error) {
+	return get(ctx, url, "Mozilla/5.0 (X11; Linux x86_64) inspect", 5<<20)
+}
+
+func get(ctx context.Context, url, agent string, limit int64) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", agent)
 	req.Header.Set("Accept", "*/*")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", false, brief(err)
+		return "", brief(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", false, fmt.Errorf("GET %s: %s", url, resp.Status)
+		return "", fmt.Errorf("GET %s: %s", url, resp.Status)
 	}
-
-	// A character is at most 4 bytes, so this is enough to fill MaxChars.
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 4*MaxChars+1))
-	if err != nil {
-		return "", false, err
-	}
-	body, truncated = Limit(string(data))
-	return body, truncated, nil
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit))
+	return string(data), err
 }
 
 // brief drops the "Get <url>:" wrapper and dial details from a request

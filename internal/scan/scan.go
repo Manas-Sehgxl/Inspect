@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Manas-Sehgxl/inspect/internal/clocked"
 	"github.com/Manas-Sehgxl/inspect/internal/fetch"
@@ -19,6 +20,7 @@ type Options struct {
 	MaxScripts int  // cap on scripts inspected per scan
 	NoGuard    bool // skip the prompt-injection check
 	NoProtect  bool // skip the secrets/PII check
+	NoCompare  bool // don't diff against earlier versions with Compare
 
 	// Progress, if set, is called before each slow step.
 	Progress func(msg string)
@@ -26,14 +28,18 @@ type Options struct {
 
 // Target is the script to start from. Source is a URL, file path or "-" for
 // stdin. Remote targets are downloaded; for the others Body holds the script.
+// Page, if set, is the URL or file of the instructions the script came
+// from, to check against it.
 type Target struct {
 	Source string
 	Remote bool
 	Body   string
+	Page   string
 }
 
 type Report struct {
 	Scripts  []*Script `json:"scripts"`
+	Page     *Page     `json:"page,omitempty"`
 	Decision Decision  `json:"decision"`
 	Credits  float64   `json:"credits"`
 }
@@ -51,6 +57,7 @@ type Script struct {
 	Guard     *clocked.InjectionResult `json:"guard,omitempty"`
 	Protect   *clocked.PIIResult       `json:"protect,omitempty"`
 	Downloads []fetch.Download         `json:"downloads,omitempty"`
+	Changed   *Change                  `json:"changed,omitempty"`
 	Errors    []string                 `json:"errors,omitempty"`
 
 	Decision Decision `json:"decision"`
@@ -58,8 +65,9 @@ type Script struct {
 }
 
 type Scanner struct {
-	Client *clocked.Client
-	Opts   Options
+	Client  *clocked.Client
+	Opts    Options
+	History History // optional; enables "changed since last check"
 }
 
 func (s *Scanner) progress(format string, args ...any) {
@@ -120,8 +128,17 @@ func (s *Scanner) Run(ctx context.Context, t Target) (*Report, error) {
 		}
 	}
 
+	if t.Page != "" {
+		rep.Page = s.checkPage(ctx, t.Page, root)
+		rep.Decision = max(rep.Decision, rep.Page.Decision)
+	}
+
+	now := time.Now()
 	for _, sc := range rep.Scripts {
 		rep.Decision = max(rep.Decision, sc.Decision)
+		if s.History != nil && sc.Source != "stdin" {
+			s.History.Record(Snapshot{Source: sc.Source, SHA256: sc.SHA256, Body: sc.Body, Decision: sc.Decision, CheckedAt: now})
+		}
 	}
 	rep.Credits = s.Client.Credits()
 	return rep, nil
@@ -163,6 +180,7 @@ func (s *Scanner) analyze(ctx context.Context, sc *Script, n int) error {
 		sc.Protect = p
 	}
 
+	s.diff(ctx, sc, n)
 	decide(sc)
 	return nil
 }

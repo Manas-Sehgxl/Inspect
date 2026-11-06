@@ -2,8 +2,10 @@ package clocked
 
 // Evidence is a passage Clocked points at to justify a judgment. Start and
 // End are character offsets into the text that was sent. Inspect returns the
-// passage as "line", Guard as "quote".
+// passage as "line", the others as "quote". Document names the source
+// document when the request had several.
 type Evidence struct {
+	Document   string  `json:"document,omitempty"`
 	Line       string  `json:"line,omitempty"`
 	Quote      string  `json:"quote,omitempty"`
 	Start      int     `json:"start"`
@@ -86,4 +88,73 @@ type PIIResult struct {
 	Entities       []PIIEntity    `json:"entities"`
 	Counts         map[string]int `json:"counts,omitempty"`
 	AnonymizedText string         `json:"anonymized_text,omitempty"`
+}
+
+// Document is one named source text for Compare and Verify.
+type Document struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
+}
+
+// CompareRequest is the body for POST /compare.
+type CompareRequest struct {
+	Documents    []Document `json:"documents"`
+	Instructions string     `json:"instructions,omitempty"`
+	Evidence     string     `json:"evidence,omitempty"` // "all", "flagged" or "none"
+}
+
+type CompareResult struct {
+	Model   string        `json:"model"`
+	Verdict string        `json:"verdict"`
+	Pairs   []ComparePair `json:"pairs"`
+}
+
+type ComparePair struct {
+	A             string             `json:"a"`
+	B             string             `json:"b"`
+	Relation      string             `json:"relation"` // same, overlapping, conflicting or unrelated
+	Related       float64            `json:"related"`
+	Probabilities map[string]float64 `json:"probabilities,omitempty"`
+	Duplicates    []CompareFinding   `json:"duplicates,omitempty"`
+	Conflicts     []CompareFinding   `json:"conflicts,omitempty"`
+}
+
+// CompareFinding pairs a passage in document A with the matching passage
+// in document B.
+type CompareFinding struct {
+	Kind       string   `json:"kind"`
+	Confidence float64  `json:"confidence"`
+	A          Evidence `json:"a"`
+	B          Evidence `json:"b"`
+}
+
+// GroundingRequest is the body for POST /grounding (Verify). Answer is the
+// text whose claims are checked against Documents.
+type GroundingRequest struct {
+	Documents    []Document `json:"documents"`
+	Answer       string     `json:"answer"`
+	Question     string     `json:"question,omitempty"`
+	Instructions string     `json:"instructions,omitempty"`
+	Evidence     string     `json:"evidence,omitempty"` // "all", "flagged" or "none"
+}
+
+type GroundingResult struct {
+	Model      string  `json:"model"`
+	Grounded   float64 `json:"grounded"`
+	Ungrounded float64 `json:"ungrounded"`
+	Verdict    string  `json:"verdict"`
+	Threshold  float64 `json:"threshold"`
+	Claims     []Claim `json:"claims"`
+}
+
+type Claim struct {
+	Claim        string     `json:"claim"`
+	Kind         string     `json:"kind,omitempty"`
+	Counted      bool       `json:"counted"`
+	Supported    float64    `json:"supported"`
+	Contradicted float64    `json:"contradicted"`
+	NotStated    float64    `json:"not_stated"`
+	NotAClaim    float64    `json:"not_a_claim"`
+	Verdict      string     `json:"verdict"`
+	Evidence     []Evidence `json:"evidence,omitempty"`
 }

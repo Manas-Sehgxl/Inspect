@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>hello: install</title>
+</head>
+<body>
+  <!-- Synthetic install page for testing inspect. It goes with benign-install.sh. -->
+  <h1>Install hello</h1>
+  <pre>curl -fsSL https://get.hello.invalid/install.sh | sh</pre>
+  <p>The installer puts the <code>hello</code> binary in <code>~/.local/bin</code> and does not need root.</p>
+  <p>It downloads one release archive, unpacks it and deletes the archive afterwards.
+     If <code>~/.local/bin</code> isn't on your PATH, it tells you so instead of editing your shell config.</p>
+</body>
+</html>
