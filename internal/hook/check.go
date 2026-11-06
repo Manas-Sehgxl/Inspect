@@ -17,26 +17,19 @@ type Verdict struct {
 	Summary  string
 }
 
-// Checker decides whether a shell command is safe to run. It is shared by
-// every agent adapter and by the browser extension's local server.
+// Checker decides whether a shell command is safe to run. Every agent
+// adapter shares it.
 type Checker struct {
 	// NewScanner is only called once there is something to check, so
 	// ordinary commands never need an API key or the network.
 	NewScanner func() (*scan.Scanner, error)
 	Cache      *Cache
-
-	// RemoteOnly ignores local script files. The local server sets it: a
-	// web page must never get inspect to read files from disk.
-	RemoteOnly bool
 }
 
 // Check finds the scripts command would run and checks each one. Failures
 // to check become Warn, so a person decides instead of the hook guessing.
 func (c *Checker) Check(ctx context.Context, command, cwd string) Verdict {
 	found := Find(command, cwd)
-	if c.RemoteOnly {
-		found = remote(found)
-	}
 	if len(found) == 0 {
 		return Verdict{}
 	}
@@ -92,14 +85,4 @@ func (c *Checker) Check(ctx context.Context, command, cwd string) Verdict {
 	}
 	v.Summary = strings.Join(parts, "\n\n")
 	return v
-}
-
-func remote(found []Found) []Found {
-	var out []Found
-	for _, f := range found {
-		if f.Remote {
-			out = append(out, f)
-		}
-	}
-	return out
 }

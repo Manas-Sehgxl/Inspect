@@ -19,6 +19,7 @@ import (
 	"github.com/Manas-Sehgxl/inspect/internal/hook"
 	"github.com/Manas-Sehgxl/inspect/internal/report"
 	"github.com/Manas-Sehgxl/inspect/internal/scan"
+	"github.com/Manas-Sehgxl/inspect/internal/serve"
 )
 
 const usage = `inspect checks a script with Clocked before you run it.
@@ -70,6 +71,9 @@ func run(args []string) int {
 	cmd, args := args[0], args[1:]
 	if cmd == "hook" {
 		return runHook(args)
+	}
+	if cmd == "serve" {
+		return runServe(args)
 	}
 	if cmd != "check" && cmd != "run" {
 		// `inspect <url>` is short for `inspect check <url>`.
@@ -210,6 +214,39 @@ func hookExec(ctx context.Context, checker *hook.Checker, args []string) int {
 	}
 	fmt.Fprintln(os.Stderr, v.Summary)
 	return exitCode(v.Decision)
+}
+
+// runServe starts the local server the browser extension talks to.
+func runServe(args []string) int {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	port := fs.Int("port", serve.DefaultPort, "")
+	if err := fs.Parse(args); err != nil {
+		return exitError
+	}
+	if _, err := apiKey(); err != nil {
+		fmt.Fprintln(os.Stderr, "inspect:", err)
+		return exitError
+	}
+	token, err := serve.LoadToken()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "inspect: pairing token:", err)
+		return exitError
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	s := &serve.Server{
+		Port:       *port,
+		Token:      token,
+		NewScanner: func() (*scan.Scanner, error) { return newScanner(scan.Options{MaxDepth: 2, MaxScripts: 8}) },
+	}
+	fmt.Fprintf(os.Stderr, "inspect is listening on http://127.0.0.1:%d for the browser extension.\n", *port)
+	fmt.Fprintf(os.Stderr, "Pairing token (paste it into the extension once): %s\n", token)
+	if err := s.ListenAndServe(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, "inspect:", err)
+		return exitError
+	}
+	return exitPass
 }
 
 func newScanner(opts scan.Options) (*scan.Scanner, error) {

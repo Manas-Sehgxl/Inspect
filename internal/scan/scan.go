@@ -29,12 +29,14 @@ type Options struct {
 // Target is the script to start from. Source is a URL, file path or "-" for
 // stdin. Remote targets are downloaded; for the others Body holds the script.
 // Page, if set, is the URL or file of the instructions the script came
-// from, to check against it.
+// from, to check against it. PageText is that page's text when the caller
+// already has it, as the browser extension does; Page then only labels it.
 type Target struct {
-	Source string
-	Remote bool
-	Body   string
-	Page   string
+	Source   string
+	Remote   bool
+	Body     string
+	Page     string
+	PageText string
 }
 
 type Report struct {
@@ -128,8 +130,8 @@ func (s *Scanner) Run(ctx context.Context, t Target) (*Report, error) {
 		}
 	}
 
-	if t.Page != "" {
-		rep.Page = s.checkPage(ctx, t.Page, root)
+	if t.Page != "" || t.PageText != "" {
+		rep.Page = s.checkPage(ctx, t.Page, t.PageText, rep.Scripts)
 		rep.Decision = max(rep.Decision, rep.Page.Decision)
 	}
 

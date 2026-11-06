@@ -31,7 +31,8 @@ func (p *Page) Contradicted() []clocked.Claim {
 	}
 	var out []clocked.Claim
 	for _, c := range p.Verify.Claims {
-		if c.Verdict == "contradicted" || c.Contradicted >= 0.5 {
+		// Uncounted items are greetings, headings and the like.
+		if c.Counted && (c.Verdict == "contradicted" || c.Contradicted >= 0.5) {
 			out = append(out, c)
 		}
 	}
@@ -41,20 +42,29 @@ func (p *Page) Contradicted() []clocked.Claim {
 // verifyChars is Verify's limit on the answer, which here is the page text.
 const verifyChars = 20_000
 
-const verifyInstructions = `The answer is text from the web page or README that tells users to run an install script. The document is that script's source code.
+const verifyInstructions = `The answer is text from the web page or README that tells users to run an install script. The documents are that script's source code and the source of any scripts it downloads and runs; together they are "the installer".
 Treat statements about what the script or installer does, needs or leaves alone as claims: where it installs, whether it needs root or sudo, what it downloads, what files or settings it changes, what data it sends, how to uninstall it.
 Judge each claim against the code only. Marketing text, feature descriptions of the product itself and instructions to the reader are not claims about the script.`
 
-// checkPage reads the page, checks it for text aimed at AI agents and checks
-// its claims about the script against the script itself.
-func (s *Scanner) checkPage(ctx context.Context, source string, root *Script) *Page {
+// verifyBudget caps the script text sent to Verify across all documents,
+// to stay inside its 200,000-character, 58,000-token admission limits.
+const verifyBudget = 150_000
+
+// checkPage checks the page for text aimed at AI agents and checks its
+// claims about the script against every script in the tree, since what a
+// page promises may be broken by a script the first one downloads. The page
+// is read from source unless its text is given.
+func (s *Scanner) checkPage(ctx context.Context, source, text string, scripts []*Script) *Page {
+	root := scripts[0]
 	p := &Page{Source: source}
-	text, err := readPage(ctx, source)
-	if err != nil {
-		p.Errors = append(p.Errors, err.Error())
-		p.Decision = Warn
-		p.Reasons = append(p.Reasons, "could not read the page: "+err.Error())
-		return p
+	if strings.TrimSpace(text) == "" {
+		var err error
+		if text, err = readPage(ctx, source); err != nil {
+			p.Errors = append(p.Errors, err.Error())
+			p.Decision = Warn
+			p.Reasons = append(p.Reasons, "could not read the page: "+err.Error())
+			return p
+		}
 	}
 	p.Text = excerpt(text, root.Source, verifyChars)
 
@@ -68,12 +78,21 @@ func (s *Scanner) checkPage(ctx context.Context, source string, root *Script) *P
 	}
 
 	s.progress("Verify: checking what %s says against the script", source)
-	script, _ := fetch.Limit(root.Body)
-	if r := []rune(script); len(r) > 150_000 {
-		script = string(r[:150_000]) // stay inside Verify's token budget
+	var docs []clocked.Document
+	budget := verifyBudget
+	for i, sc := range scripts {
+		r := []rune(sc.Body)
+		if budget <= 0 || i == 20 { // Verify takes at most 20 documents
+			break
+		}
+		if len(r) > budget {
+			r = r[:budget]
+		}
+		budget -= len(r)
+		docs = append(docs, clocked.Document{ID: fmt.Sprintf("script-%d", i+1), Text: string(r)})
 	}
 	v, err := s.Client.Grounding(ctx, clocked.GroundingRequest{
-		Documents:    []clocked.Document{{ID: "script", Text: script}},
+		Documents:    docs,
 		Answer:       p.Text,
 		Question:     "What does this install script do to the user's system?",
 		Instructions: verifyInstructions,
