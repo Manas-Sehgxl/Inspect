@@ -39,6 +39,35 @@ The exit status is 0 for pass, 1 for warn, 2 for block and 3 for errors, so othe
 | `--no-guard`, `--no-protect` | skip a check to save credits |
 | `--force` | let `run` execute a blocked script, after typing `run anyway` |
 
+## Guard a coding agent
+
+Coding agents run `curl | bash` too, and they can be talked into it by text on the page or in the script. `inspect hook claude-code` is a [Claude Code](https://docs.claude.com/en/docs/claude-code/hooks) PreToolUse hook that checks every script an agent's shell command would run:
+
+- remote scripts fed to an interpreter: `curl … | sh`, `bash <(curl …)`, `sh -c "$(curl …)"`, `iwr … | iex`
+- local scripts: `bash install.sh`, `sudo sh ./setup.sh`, `source env.sh`, and `./script` when it has a shell `#!` line
+
+| Decision | What the agent sees |
+|---|---|
+| BLOCK | the command is denied, with the flagged lines as the reason |
+| WARN | you're asked to approve it, with the reason shown |
+| PASS | the command goes through your normal permission rules; the result is added to the agent's context |
+
+Commands that run no script return immediately, without any network calls. Verdicts are cached for 24 hours by script hash (scripts that run nested downloads are always re-checked).
+
+Install it by adding the output of this command to `~/.claude/settings.json`, merging it with any hooks you already have:
+
+```sh
+inspect hook claude-code --print-config
+```
+
+Hooks don't inherit variables exported in your shell, so put the key in a file:
+
+```sh
+mkdir -p ~/.config/clocked && (umask 077; echo "$CLOCKED_API_KEY" > ~/.config/clocked/key)
+```
+
+One limit to know: the hook checks a remote script, then the agent's command downloads it again to run it. A server could serve different content the second time. `inspect run` doesn't have this gap, because it runs the bytes it checked.
+
 ## Try it
 
 `samples/` has two synthetic scripts. Every host in them uses the reserved `.invalid` domain, so nothing can be reached.

@@ -12,9 +12,11 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 
 	"github.com/Manas-Sehgxl/inspect/internal/clocked"
+	"github.com/Manas-Sehgxl/inspect/internal/hook"
 	"github.com/Manas-Sehgxl/inspect/internal/report"
 	"github.com/Manas-Sehgxl/inspect/internal/scan"
 )
@@ -26,6 +28,9 @@ Usage:
   inspect run   <url|file|-> [-- args...]
                                    check, ask, then run the exact bytes checked
   curl -fsSL <url> | inspect run   same, reading the script from stdin
+  inspect hook claude-code         Claude Code PreToolUse hook (reads JSON on stdin)
+  inspect hook claude-code --print-config
+                                   print the settings.json snippet that installs it
 
 Flags:
   --json          print the report as JSON (check only)
@@ -35,7 +40,8 @@ Flags:
   --force         let run execute a script that was blocked
 
 Exit status: 0 pass, 1 warn, 2 block, 3 error.
-Set CLOCKED_API_KEY to your key from https://clocked.rezolve.ai/account.
+The Clocked API key comes from CLOCKED_API_KEY, or else ~/.config/clocked/key.
+Create one at https://clocked.rezolve.ai/account.
 `
 
 // Exit codes, so scripts and agent hooks can act on the decision.
@@ -56,6 +62,9 @@ func run(args []string) int {
 		return exitPass
 	}
 	cmd, args := args[0], args[1:]
+	if cmd == "hook" {
+		return runHook(args)
+	}
 	if cmd != "check" && cmd != "run" {
 		// `inspect <url>` is short for `inspect check <url>`.
 		cmd, args = "check", append([]string{cmd}, args...)
@@ -82,9 +91,16 @@ func run(args []string) int {
 		return exitError
 	}
 
-	key := os.Getenv("CLOCKED_API_KEY")
-	if key == "" {
-		fmt.Fprintln(os.Stderr, "inspect: set CLOCKED_API_KEY (create a key at https://clocked.rezolve.ai/account)")
+	opts := scan.Options{
+		MaxDepth:   *depth,
+		MaxScripts: 8,
+		NoGuard:    *noGuard,
+		NoProtect:  *noProtect,
+		Progress:   progress(),
+	}
+	sc, err := newScanner(opts)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "inspect:", err)
 		return exitError
 	}
 
@@ -97,20 +113,6 @@ func run(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	client := clocked.New(key)
-	if u := os.Getenv("CLOCKED_BASE_URL"); u != "" {
-		client.BaseURL = u
-	}
-	sc := &scan.Scanner{
-		Client: client,
-		Opts: scan.Options{
-			MaxDepth:   *depth,
-			MaxScripts: 8,
-			NoGuard:    *noGuard,
-			NoProtect:  *noProtect,
-			Progress:   progress(),
-		},
-	}
 	rep, err := sc.Run(ctx, target)
 	clearProgress()
 	if err != nil {
@@ -128,6 +130,63 @@ func run(args []string) int {
 		return exitCode(rep.Decision)
 	}
 	return execute(rep, scriptArgs, *force)
+}
+
+func runHook(args []string) int {
+	if len(args) == 0 || args[0] != "claude-code" {
+		fmt.Fprintln(os.Stderr, "inspect: usage: inspect hook claude-code [--print-config]")
+		return exitError
+	}
+	if len(args) > 1 && args[1] == "--print-config" {
+		bin, err := os.Executable()
+		if err != nil {
+			bin = "inspect"
+		}
+		fmt.Print(hook.ClaudeConfig(bin))
+		return exitPass
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	scanner := func() (*scan.Scanner, error) {
+		return newScanner(scan.Options{MaxDepth: 2, MaxScripts: 8})
+	}
+	if err := hook.Claude(ctx, os.Stdin, os.Stdout, scanner, hook.DefaultCache()); err != nil {
+		// Exit 1 is a non-blocking error in Claude Code: it reports it and
+		// carries on, so a broken hook never wedges the agent.
+		fmt.Fprintln(os.Stderr, "inspect:", err)
+		return 1
+	}
+	return exitPass
+}
+
+func newScanner(opts scan.Options) (*scan.Scanner, error) {
+	key, err := apiKey()
+	if err != nil {
+		return nil, err
+	}
+	client := clocked.New(key)
+	if u := os.Getenv("CLOCKED_BASE_URL"); u != "" {
+		client.BaseURL = u
+	}
+	return &scan.Scanner{Client: client, Opts: opts}, nil
+}
+
+// apiKey reads the Clocked key from CLOCKED_API_KEY, or else from
+// ~/.config/clocked/key. The file matters for hooks, which don't inherit
+// variables exported in the user's shell.
+func apiKey() (string, error) {
+	if k := os.Getenv("CLOCKED_API_KEY"); k != "" {
+		return k, nil
+	}
+	if dir, err := os.UserConfigDir(); err == nil {
+		if data, err := os.ReadFile(filepath.Join(dir, "clocked", "key")); err == nil {
+			if k := strings.TrimSpace(string(data)); k != "" {
+				return k, nil
+			}
+		}
+	}
+	return "", errors.New("no Clocked API key: set CLOCKED_API_KEY or write it to ~/.config/clocked/key (create one at https://clocked.rezolve.ai/account)")
 }
 
 // parseInterspersed lets flags come after the target, as in

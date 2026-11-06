@@ -30,6 +30,20 @@ func (d Decision) MarshalJSON() ([]byte, error) {
 	return json.Marshal(strings.ToLower(d.String()))
 }
 
+func (d *Decision) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	for _, v := range []Decision{Pass, Warn, Block} {
+		if strings.EqualFold(s, v.String()) {
+			*d = v
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown decision %q", s)
+}
+
 // decide turns the endpoint results for one script into a decision and the
 // reasons behind it. It only raises sc.Decision, never lowers it.
 func decide(sc *Script) {

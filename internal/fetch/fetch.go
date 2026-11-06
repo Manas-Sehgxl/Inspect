@@ -4,9 +4,12 @@ package fetch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"time"
 	"unicode/utf8"
 )
@@ -32,7 +35,7 @@ func Get(ctx context.Context, url string) (body string, truncated bool, err erro
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", false, err
+		return "", false, brief(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -46,6 +49,20 @@ func Get(ctx context.Context, url string) (body string, truncated bool, err erro
 	}
 	body, truncated = Limit(string(data))
 	return body, truncated, nil
+}
+
+// brief drops the "Get <url>:" wrapper and dial details from a request
+// error; callers already say which URL failed.
+func brief(err error) error {
+	var dns *net.DNSError
+	if errors.As(err, &dns) && dns.IsNotFound {
+		return errors.New("host not found")
+	}
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return ue.Err
+	}
+	return err
 }
 
 // Limit cuts s to MaxChars characters.
