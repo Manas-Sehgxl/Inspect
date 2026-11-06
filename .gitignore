@@ -1,3 +1,4 @@
 /inspect
 /dist/
 .env
+.claude/settings.local.json
