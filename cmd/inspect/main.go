@@ -435,6 +435,10 @@ func progress() func(string) {
 		return nil
 	}
 	return func(msg string) {
+		// Stay on one line: the clear below can't erase a wrapped message.
+		if r := []rune(msg); len(r) > 72 {
+			msg = string(r[:72])
+		}
 		fmt.Fprintf(os.Stderr, "\r\x1b[2K\x1b[2m%s…\x1b[0m", msg)
 	}
 }
