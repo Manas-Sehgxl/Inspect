@@ -16,9 +16,19 @@
       String.raw`\b(ba|z)?sh\s+-c\s+["']?\$\(\s*(curl|wget)\b`,
       String.raw`\b(iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n]*\|\s*(iex|Invoke-Expression)\b`,
       String.raw`\biex\s*\(\s*(irm|iwr)\b`,
+      // Downloaded to a file, then run: curl ... -o get-docker.sh; sh get-docker.sh
+      String.raw`\b(curl|wget)\b[^\n]*\s-[a-zA-Z]*[oO]\s*\S+[\s\S]{0,400}?(\b(ba|z|da)?sh\s+|\bsource\s+|(^|\s)\.\/)\S`,
     ].join("|"),
     "i",
   );
+
+  // Where pages put commands: code blocks, and elements named like them, as
+  // in ohmyz.sh's <p class="code">.
+  const COMMAND_SEL = [
+    "pre", "code", "kbd", "samp",
+    '[class*="code" i]', '[class*="command" i]', '[class*="cmd" i]',
+    '[class*="terminal" i]', '[class*="shell" i]', '[class*="snippet" i]',
+  ].join(",");
 
   const STYLE = `
     :host { all: initial; }
@@ -26,7 +36,7 @@
     .wrap { font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color: #1f2328; }
     .bar { display: flex; gap: 8px; align-items: center; margin: 4px 0 10px; }
     button {
-      font: 600 12px/1 system-ui, sans-serif; cursor: pointer; border-radius: 999px;
+      font: 600 12px/1 system-ui, sans-serif; cursor: pointer; border-radius: 999px; white-space: nowrap;
       padding: 5px 11px; border: 1px solid #d0d7de; background: #f6f8fa; color: #1f2328;
     }
     button:hover { background: #eef1f4; }
@@ -190,18 +200,42 @@
       },
     }, "Check with inspect");
     wrap.append(h("div", { class: "bar" }, button), panel);
-    el.after(host);
+    anchor(el).after(host);
   }
 
+  // anchor climbs out of wrappers that hold nothing but this command, such as
+  // a scrolling highlight box around a <pre>, so the result isn't clipped
+  // inside them.
+  function anchor(el) {
+    const text = (el.textContent || "").trim();
+    let a = el;
+    while (a.parentElement && a.parentElement !== document.body && (a.parentElement.textContent || "").trim() === text) {
+      a = a.parentElement;
+    }
+    return a;
+  }
+
+  function matches(el) {
+    const text = el.textContent || "";
+    return text.length <= 20000 && RUNS_REMOTE.test(text);
+  }
+
+  function handled(el) {
+    for (let p = el; p; p = p.parentElement) if (done.has(p)) return true;
+    return false;
+  }
+
+  // scan adds a button to the innermost element holding each command, so a
+  // terminal widget wrapping a <pre> wrapping a <code> gets one button.
   function scan() {
     let n = 0;
-    for (const el of document.querySelectorAll("pre, code")) {
+    for (const el of document.querySelectorAll(COMMAND_SEL)) {
       if (n >= 200) break;
-      if (done.has(el)) continue;
-      if (el.tagName === "CODE" && el.closest("pre")) continue; // the <pre> covers it
-      if (el.closest("inspect-ui") || el.isContentEditable) continue;
-      const text = el.textContent || "";
-      if (text.length > 20000 || !RUNS_REMOTE.test(text)) continue;
+      if (handled(el) || el.closest("inspect-ui") || el.isContentEditable) continue;
+      if (el.tagName === "CODE" && el.closest("pre")) continue; // the <pre> keeps its layout
+      if (!matches(el)) continue;
+      const inner = [...el.querySelectorAll(COMMAND_SEL)].some((c) => c.tagName !== "CODE" && c !== el && matches(c));
+      if (inner) continue; // a smaller element holds the command; it gets the button
       attach(el);
       n++;
     }
